@@ -1124,10 +1124,10 @@ Try using a larger periodsize");
 
 static PyObject *alsapcm_write(alsapcm_t *self, PyObject *args)
 {
+    int xruns = 0;
     int res;
     int datalen;
     char *data;
-    PyObject *rc = NULL;
 
 #if PY_MAJOR_VERSION < 3
     if (!PyArg_ParseTuple(args,"s#:write", &data, &datalen))
@@ -1159,6 +1159,7 @@ static PyObject *alsapcm_write(alsapcm_t *self, PyObject *args)
     res = snd_pcm_writei(self->handle, data, datalen/self->framesize);
     if (res == -EPIPE)
     {
+        xruns++; // Count xruns. Would like to know duration
         /* EPIPE means underrun */
         res = snd_pcm_recover(self->handle, res, 1);
         if (res >= 0)
@@ -1167,15 +1168,16 @@ static PyObject *alsapcm_write(alsapcm_t *self, PyObject *args)
     Py_END_ALLOW_THREADS
 
     if (res == -EAGAIN) {
-        rc = PyLong_FromLong(0);
+        return Py_BuildValue("ll", 0, xruns);
     }
     else if (res < 0)
     {
         PyErr_Format(ALSAAudioError, "%s [%s]", snd_strerror(res),
                      self->cardname);
+        return NULL;
     }
     else {
-        rc = PyLong_FromLong(res);
+        return Py_BuildValue("ll", res, xruns);
     }
 
 #if PY_MAJOR_VERSION >= 3
