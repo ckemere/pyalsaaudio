@@ -1184,7 +1184,7 @@ static PyObject *alsapcm_write(alsapcm_t *self, PyObject *args)
     PyBuffer_Release(&buf);
 #endif
 
-    return rc;
+    return NULL;
 }
 
 PyDoc_STRVAR(write_doc,
