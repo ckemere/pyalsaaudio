@@ -1057,6 +1057,7 @@ alsapcm_read(alsapcm_t *self, PyObject *args)
     {
         /* EPIPE means overrun */
         snd_pcm_prepare(self->handle);
+        printf("Xrun!\n");
     }
     Py_END_ALLOW_THREADS
 
@@ -1120,6 +1121,124 @@ if no new period has become available since the last call to read.\n\
 In case of an overrun, this function will return a negative size: -EPIPE.\n\
 This indicates that data was lost, even if the operation itself succeeded.\n\
 Try using a larger periodsize");
+
+static PyObject *alsapcm_enable_timestamps(alsapcm_t *self, PyObject *args)
+{
+    int res, err;
+  	snd_pcm_sw_params_t *sw_params;
+
+
+    if (!self->handle) {
+        PyErr_SetString(ALSAAudioError, "PCM device is closed");
+        return NULL;
+    }
+
+    if ((err = snd_pcm_sw_params_malloc(&sw_params)) < 0)
+    {
+        printf("Error: %d\n", err);
+        return NULL;
+    //handle error
+    }
+    err = snd_pcm_sw_params_current(self->handle, sw_params);
+    if (err < 0) {
+        printf("Unable to determine current swparams: %s\n", snd_strerror(err));
+        return NULL;
+    }
+
+    if ((err = snd_pcm_sw_params_set_tstamp_mode(self->handle, sw_params, SND_PCM_TSTAMP_ENABLE)) < 0)
+    {
+    //handle error
+        printf("Error setting enable: %s\n", snd_strerror(err));
+        return NULL;
+    }
+    if ((err = snd_pcm_sw_params_set_tstamp_mode(self->handle, sw_params, SND_PCM_TSTAMP_TYPE_MONOTONIC)) < 0)
+    {
+    //handle error
+        printf("Error setting mode: %s\n", snd_strerror(err));
+        return NULL;
+    }
+
+    /* write the sw parameters */
+    err = snd_pcm_sw_params(self->handle, sw_params);
+    if (err < 0) {
+        printf("Unable to set swparams_c : %s\n", snd_strerror(err));
+        return NULL;
+    }
+
+    snd_pcm_sw_params_free(sw_params);
+
+    printf("Set up timestamp params sucessfully\n");
+
+    /*Py_BEGIN_ALLOW_THREADS
+    res = snd_pcm_start(self->handle);
+    Py_END_ALLOW_THREADS
+    */
+   
+    return PyLong_FromLong(0);
+}
+
+
+PyDoc_STRVAR(enable_timestamps_doc,
+"enable_timestamps() -> (long)\n\
+\n\
+This function sets the driver to enable keeping timestamps during capture or playback.\n\
+The timestamps can be retrieved with gettimestamp().\n\
+\n\
+");
+
+
+long long timestamp2ns(snd_htimestamp_t t)
+{
+	long long nsec;
+
+	nsec = t.tv_sec * 1000000000;
+	nsec += t.tv_nsec;
+
+	return nsec;
+}
+
+static PyObject *
+alsapcm_gettimestamp(alsapcm_t *self, PyObject *args)
+{
+	int err;
+    /*
+	snd_timestamp_t tstamp;
+	snd_htimestamp_t trigger_htstamp, htstamp, audio_htstamp;
+    */
+	snd_htimestamp_t htstamp;
+    snd_pcm_status_t *status;
+	snd_pcm_audio_tstamp_config_t audio_tstamp_config_c;
+
+	snd_pcm_status_alloca(&status);
+    
+	memset(&audio_tstamp_config_c, 0, sizeof(snd_pcm_audio_tstamp_config_t));
+    audio_tstamp_config_c.type_requested = 1;
+ 	snd_pcm_status_set_audio_htstamp_config(status, &audio_tstamp_config_c);
+
+    if ((err = snd_pcm_status(self->handle, status)) < 0) {
+		printf("Stream status error: %s\n", snd_strerror(err));
+		exit(0);
+	}
+
+	snd_pcm_status_get_htstamp(status,  &htstamp);
+    /*
+    snd_pcm_status_get_trigger_htstamp(status, &trigger_htstamp);
+	snd_pcm_status_get_audio_htstamp(status, &audio_htstamp);
+    */
+
+    //snd_pcm_status_free(status);
+
+    return Py_BuildValue("l", timestamp2ns(htstamp));
+}
+
+PyDoc_STRVAR(gettimestamp_doc,
+"gettimestamp() -> (long)\n\
+\n\
+This function returns the current timestamp as reported by snd_pcm_status_get_htstamp().\n\
+In order for it to function enable_timestamps() must first be called.\n\
+\n\
+");
+
 
 
 static PyObject *alsapcm_write(alsapcm_t *self, PyObject *args)
@@ -1348,6 +1467,8 @@ static PyMethodDef alsapcm_methods[] = {
     {"getrates", (PyCFunction)alsapcm_getrates, METH_VARARGS, getrates_doc},
     {"getchannels", (PyCFunction)alsapcm_getchannels, METH_VARARGS, getchannels_doc},
     {"read", (PyCFunction)alsapcm_read, METH_VARARGS, read_doc},
+    {"enable_timestamps", (PyCFunction)alsapcm_enable_timestamps, METH_VARARGS, enable_timestamps_doc},
+    {"gettimestamp", (PyCFunction)alsapcm_gettimestamp, METH_VARARGS, gettimestamp_doc},
     {"write", (PyCFunction)alsapcm_write, METH_VARARGS, write_doc},
     {"pause", (PyCFunction)alsapcm_pause, METH_VARARGS, pause_doc},
     {"drop", (PyCFunction)alsapcm_drop, METH_VARARGS, drop_doc},
