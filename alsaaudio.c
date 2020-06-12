@@ -1144,6 +1144,11 @@ alsapcm_read_into(alsapcm_t *self, PyObject *args)
         return NULL;
     }
     else {
+        /* Check numpy array for errors in shape and type. */
+        if (!PyArray_CHKFLAGS(dataArray, NPY_ARRAY_CARRAY)) {
+            PyErr_SetString(ALSAAudioError, "Your numpy array is not well behaved (NPY_ARRAY_CARRAY). Is it in C-order?");
+            return NULL;
+        }
         if (PyArray_NDIM(dataArray) != 2) {
             PyErr_SetString(ALSAAudioError, "You must pass a 2 dimensional array of size buffer_len x n_channels.");
             return NULL;
