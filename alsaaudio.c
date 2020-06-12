@@ -25,6 +25,9 @@
     #define PyLong_FromLong PyInt_FromLong
 #endif
 
+#include <numpy/ndarraytypes.h>
+#include <numpy/ndarrayobject.h>
+
 #include <alsa/asoundlib.h>
 #include <alsa/version.h>
 #include <stdio.h>
@@ -1027,10 +1030,11 @@ alsapcm_read(alsapcm_t *self, PyObject *args)
     if (!PyArg_ParseTuple(args,":read"))
         return NULL;
 
+
     if (!self->handle) {
         PyErr_SetString(ALSAAudioError, "PCM device is closed");
         return NULL;
-  }
+    }
 
     if (self->pcmtype != SND_PCM_STREAM_CAPTURE)
     {
@@ -1121,6 +1125,108 @@ if no new period has become available since the last call to read.\n\
 In case of an overrun, this function will return a negative size: -EPIPE.\n\
 This indicates that data was lost, even if the operation itself succeeded.\n\
 Try using a larger periodsize");
+
+
+static PyObject *
+alsapcm_read_into(alsapcm_t *self, PyObject *args)
+{
+    int res;
+    int size = self->framesize * self->periodsize;
+
+#if PY_MAJOR_VERSION < 3
+        PyErr_SetString(ALSAAudioError, "read_into is only implemented for Python 3");
+        return NULL;
+#endif
+
+    PyArrayObject* dataArray = NULL;
+
+    if (!PyArg_ParseTuple(args, "O!:read_into", &PyArray_Type, &dataArray)) {
+        return NULL;
+    }
+    else {
+        if (PyArray_NDIM(dataArray) != 2) {
+            PyErr_SetString(ALSAAudioError, "You must pass a 2 dimensional array of size buffer_len x n_channels.");
+            return NULL;
+        }
+        if (PyArray_DIM(dataArray, 0) < size) {
+            PyErr_Format(ALSAAudioError, "Buffer length (dim 0) must be at least %d based on your periodsize setting.", size);
+            return NULL;
+        }
+        if (PyArray_DIM(dataArray, 1) != self->channels) {
+            PyErr_Format(ALSAAudioError, "N Channels (dim 1) must be at least %d based on your channels setting.", self->channels);
+            return NULL;
+        }
+        if (PyArray_ITEMSIZE(dataArray) != (self->framesize / self->channels)) {
+            PyErr_Format(ALSAAudioError, "DType does not match expected size: %d.", (self->framesize / self->channels));
+            return NULL;
+        }
+    }
+
+    if (!self->handle) {
+        PyErr_SetString(ALSAAudioError, "PCM device is closed");
+        return NULL;
+    }
+
+    if (self->pcmtype != SND_PCM_STREAM_CAPTURE)
+    {
+        PyErr_Format(ALSAAudioError, "Cannot read from playback PCM [%s]",
+                     self->cardname);
+        return NULL;
+    }
+
+    Py_BEGIN_ALLOW_THREADS
+    res = snd_pcm_readi(self->handle, PyArray_DATA(dataArray), self->periodsize);
+    if (res == -EPIPE)
+    {
+        /* EPIPE means overrun */
+        snd_pcm_prepare(self->handle);
+        printf("Xrun!\n");
+    }
+    Py_END_ALLOW_THREADS
+
+    if (res != -EPIPE)
+    {
+        if (res == -EAGAIN)
+        {
+            res = 0;
+        }
+        else if (res < 0) {
+            PyErr_Format(ALSAAudioError, "%s [%s]", snd_strerror(res),
+                         self->cardname);
+
+            return NULL;
+        }
+    }
+
+    if (res <= 0) {
+        return NULL;
+    }
+
+    return PyLong_FromLong(res);
+}
+
+PyDoc_STRVAR(read_into_doc,
+"read_into(ndarray) -> (length)\n\
+\n\
+This is a version of read() where the memory being written is preallocated\n\
+and passed into the function as a numpy array. This alleviates the need\n\
+to repeatedly free and allocate this memory.\n\
+\n\
+In PCM_NORMAL mode, this function blocks until a full period is\n\
+available, and then returns (length) where length is the number of frames\n\
+of the captured sound data. The data is written into the ndarray which was passed\n\
+in. Note that the ndarray must be nperiods*periodsize large, while\n\
+typically only periodsize frames will be read in per function call!\n\
+\n\
+In PCM_NONBLOCK mode, the call will not block, but will return (0,'')\n\
+if no new period has become available since the last call to read.\n\
+If it does return, it will likely return many fewer frames than the\n\
+periodsize.\n\
+\n\
+In case of an overrun, this function will return a negative size: -EPIPE.\n\
+This indicates that data was lost, even if the operation itself succeeded.\n\
+Try using a larger periodsize");
+
 
 static PyObject *alsapcm_enable_timestamps(alsapcm_t *self, PyObject *args)
 {
@@ -1467,6 +1573,7 @@ static PyMethodDef alsapcm_methods[] = {
     {"getrates", (PyCFunction)alsapcm_getrates, METH_VARARGS, getrates_doc},
     {"getchannels", (PyCFunction)alsapcm_getchannels, METH_VARARGS, getchannels_doc},
     {"read", (PyCFunction)alsapcm_read, METH_VARARGS, read_doc},
+    {"read_into", (PyCFunction)alsapcm_read_into, METH_VARARGS, read_into_doc},
     {"enable_timestamps", (PyCFunction)alsapcm_enable_timestamps, METH_VARARGS, enable_timestamps_doc},
     {"gettimestamp", (PyCFunction)alsapcm_gettimestamp, METH_VARARGS, gettimestamp_doc},
     {"write", (PyCFunction)alsapcm_write, METH_VARARGS, write_doc},
@@ -2862,6 +2969,8 @@ PyObject *PyInit_alsaaudio(void)
     ALSAPCMType.tp_new = alsapcm_new;
     ALSAMixerType.tp_new = alsamixer_new;
 
+    import_array(); // Needed for numpy array
+
     PyEval_InitThreads();
 
 #if PY_MAJOR_VERSION < 3
@@ -2964,4 +3073,5 @@ PyObject *PyInit_alsaaudio(void)
 #if PY_MAJOR_VERSION >= 3
     return m;
 #endif
+
 }
