@@ -114,6 +114,7 @@ typedef struct {
     int format;
     snd_pcm_uframes_t periodsize;
     int framesize;
+    unsigned int periods;
 
 } alsapcm_t;
 
@@ -390,11 +391,13 @@ static int alsapcm_setup(alsapcm_t *self)
                                    self->channels);
 
     dir = 0;
-    unsigned int periods = 4;
     snd_pcm_hw_params_set_rate_near(self->handle, hwparams, &self->rate, &dir);
+    dir = 0;
     snd_pcm_hw_params_set_period_size_near(self->handle, hwparams,
                                            &self->periodsize, &dir);
-    snd_pcm_hw_params_set_periods_near(self->handle, hwparams, &periods, &dir);
+    dir = -1; // we want low latency, so ask for this to be small.
+    snd_pcm_hw_params_set_periods_near(self->handle, hwparams, &self->periods, &dir);
+    printf("Number of periods per buffer chosen is %d\n", self->periods);
 
     /* Write it to the device */
     res = snd_pcm_hw_params(self->handle, hwparams);
@@ -478,6 +481,7 @@ alsapcm_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     self->rate = 44100;
     self->format = SND_PCM_FORMAT_S16_LE;
     self->periodsize = 32;
+    self->periods = 4;
 
     res = snd_pcm_open(&(self->handle), device, self->pcmtype,
                        self->pcmmode);
@@ -1018,6 +1022,48 @@ Sets the actual period size in frames. Each write should consist of\n\
 exactly this number of frames, and each read will return this number of\n\
 frames (unless the device is in PCM_NONBLOCK mode, in which case it\n\
 may return nothing at all).");
+
+static PyObject *
+alsapcm_setperiods(alsapcm_t *self, PyObject *args)
+{
+    int periods, saved;
+    int res;
+
+    if (!PyArg_ParseTuple(args,"i:setperiods", &periods))
+        return NULL;
+
+    
+    if (!self->handle)
+    {
+        PyErr_SetString(ALSAAudioError, "PCM device is closed");
+        return NULL;
+    }
+
+    saved = self->periods;
+    self->periods = periods;
+    res = alsapcm_setup(self);
+    if (res < 0)
+    {
+        self->periods = saved;
+        PyErr_Format(ALSAAudioError, "%s [%s]", snd_strerror(res),
+                     self->cardname);
+
+        
+        
+        return NULL;
+    }
+
+    return PyLong_FromLong(self->periods);
+}
+
+PyDoc_STRVAR(setperiods_doc,
+"setperiods(period) -> int\n\
+\n\
+Sets the number of periods in the ALSA circular buffer. Each period is \n\
+periodsize frames. A smaller number of periods will reduce the latency \n\
+between a write and actual sound output, but will alsp increase \n\
+the likelihood of an x-run.");
+
 
 static PyObject *
 alsapcm_read(alsapcm_t *self, PyObject *args)
@@ -1572,6 +1618,7 @@ static PyMethodDef alsapcm_methods[] = {
     {"setformat", (PyCFunction)alsapcm_setformat, METH_VARARGS, setformat_doc},
     {"setperiodsize", (PyCFunction)alsapcm_setperiodsize, METH_VARARGS,
      setperiodsize_doc},
+    {"setperiods", (PyCFunction)alsapcm_setperiods, METH_VARARGS,setperiods_doc},
     {"dumpinfo", (PyCFunction)alsapcm_dumpinfo, METH_VARARGS},
     {"getformats", (PyCFunction)alsapcm_getformats, METH_VARARGS, getformats_doc},
     {"getratebounds", (PyCFunction)alsapcm_getratemaxmin, METH_VARARGS, getratebounds_doc},
