@@ -395,7 +395,7 @@ static int alsapcm_setup(alsapcm_t *self)
     dir = 0;
     snd_pcm_hw_params_set_period_size_near(self->handle, hwparams,
                                            &self->periodsize, &dir);
-    dir = -1; // we want low latency, so ask for this to be small.
+    // dir = -1; // we want low latency, so ask for this to be small.
     snd_pcm_hw_params_set_periods_near(self->handle, hwparams, &self->periods, &dir);
     printf("Number of periods per buffer chosen is %d\n", self->periods);
 
@@ -1231,7 +1231,7 @@ alsapcm_read_into(alsapcm_t *self, PyObject *args)
     {
         /* EPIPE means overrun */
         snd_pcm_prepare(self->handle);
-        printf("Xrun!\n");
+        printf("Xrun in record!\n");
     }
     Py_END_ALLOW_THREADS
 
@@ -1248,9 +1248,12 @@ alsapcm_read_into(alsapcm_t *self, PyObject *args)
             return NULL;
         }
     }
+    else {
+        res = 0;
+    }
 
-    if (res <= 0) {
-        return NULL;
+    if (res < 0) {
+        return NULL; // Don't raise an error for EPIPE or EAGAIN
     }
 
     return PyLong_FromLong(res);
