@@ -7,6 +7,7 @@
 from __future__ import print_function
 
 import sys
+import time
 from threading import Thread
 from multiprocessing import Queue
 
@@ -15,14 +16,15 @@ if sys.version_info[0] < 3:
 else:
     from queue import Empty
 
-from math import pi, sin
+from math import pi, sin, ceil
 import struct
+import itertools
 import alsaaudio
 
 sampling_rate = 48000
 
 format = alsaaudio.PCM_FORMAT_S16_LE
-framesize = 2 # bytes per frame for the values above
+pack_format = 'h'  # short int, matching S16
 channels = 2
 
 def nearest_frequency(frequency):
@@ -34,32 +36,29 @@ def generate(frequency, duration = 0.125):
     # generate a buffer with a sine wave of `frequency`
     # that is approximately `duration` seconds long
 
-    # the buffersize we approximately want
-    target_size = int(sampling_rate * channels * duration)
-
     # the length of a full sine wave at the frequency
     cycle_size = int(sampling_rate / frequency)
 
-    # number of full cycles we can fit into target_size
-    factor = int(target_size / cycle_size)
+    # number of full cycles we can fit into the duration
+    factor = int(ceil(duration * frequency))
 
-    size = max(int(cycle_size * factor), 1)
-    
+    # total number of frames
+    size = cycle_size * factor
+
     sine = [ int(32767 * sin(2 * pi * frequency * i / sampling_rate)) \
              for i in range(size)]
-             
-    return struct.pack('%dh' % size, *sine)
-                                                                                  
+
+    if channels > 1:
+        sine = list(itertools.chain.from_iterable(itertools.repeat(x, channels) for x in sine))
+
+    return struct.pack(str(size * channels) + pack_format, *sine)
+
 
 class SinePlayer(Thread):
-    
+
     def __init__(self, frequency = 440.0):
-        Thread.__init__(self)
-        self.setDaemon(True)
-        self.device = alsaaudio.PCM()
-        self.device.setchannels(channels)
-        self.device.setformat(format)
-        self.device.setrate(sampling_rate)
+        Thread.__init__(self, daemon=True)
+        self.device = alsaaudio.PCM(channels=channels, format=format, rate=sampling_rate)
         self.queue = Queue()
         self.change(frequency)
 
@@ -76,22 +75,23 @@ class SinePlayer(Thread):
 
         buf = generate(f)
         self.queue.put(buf)
-                        
+
     def run(self):
         buffer = None
         while True:
             try:
                 buffer = self.queue.get(False)
-                self.device.setperiodsize(int(len(buffer) / framesize))
-                self.device.write(buffer)
             except Empty:
-                if buffer:
-                    self.device.write(buffer)
-                
+                pass
+            if buffer:
+                if self.device.write(buffer) < 0:
+                    print("Playback buffer underrun! Continuing nonetheless ...")
+
 
 isine = SinePlayer()
 isine.start()
 
-def change(f):
-    isine.change(f)
-    
+time.sleep(1)
+isine.change(1000)
+time.sleep(1)
+
