@@ -1,5 +1,4 @@
 include *.py
-include *.pyi
 include CHANGES
 include TODO
 include LICENSE

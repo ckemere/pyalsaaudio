@@ -4,11 +4,6 @@ MANIFEST
 doc/gh-pages/
 doc/html/
 doc/doctrees/
-doc/_build/
 gh-pages/
 build/
 dist/
-.vscode/
-/__pycache__/
-/pyalsaaudio.egg-info/
-*.raw
