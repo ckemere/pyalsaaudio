@@ -7,6 +7,7 @@ It is fairly complete for PCM devices and Mixer access.
 from setuptools import setup
 from setuptools.extension import Extension
 from sys import version
+import numpy
 
 pyalsa_version = '0.8.6'
 
@@ -36,5 +37,6 @@ if __name__ == '__main__':
             'Topic :: Multimedia :: Sound/Audio :: Capture/Recording',
             ],
         ext_modules=[Extension('alsaaudio',['alsaaudio.c'], 
+                               include_dirs=[numpy.get_include()],
                                libraries=['asound'])]
     )
